@@ -8,7 +8,7 @@
 // already read plays it again.
 
 (function () {
-  const MVR_VERSION = 103;
+  const MVR_VERSION = 104;
   // A previous injection's `data-mvr-observed` markers live on the actual
   // DOM elements, not in this closure — if the script runs again (repeat
   // "Start reading" click, or an update while the tab was never fully
@@ -37,7 +37,9 @@
 
   const STATE = {
     enabled: true,
+    ttsEngine: 'piper', // 'piper' or 'kokoro'
     piperVoiceId: 'en_US-hfc_female-medium',
+    kokoroVoiceId: 'af_heart',
     direction: 'rtl', // 'rtl' (manga default) or 'ltr' (western comics/webtoons)
     minImgSize: 320,
     minConfidence: 45,
@@ -445,7 +447,7 @@
   // its text out of results by screen position instead (double rAF below is
   // still needed for other pending DOM updates to actually paint before the
   // capture happens, unrelated to the overlay).
-  // 20s timeout mirrors speakPiperOnce's — a dropped response here would
+  // 20s timeout mirrors speakTtsOnce's — a dropped response here would
   // otherwise leave `capturing` stuck true forever, same class of wedge.
   const OCR_RESPONSE_TIMEOUT_MS = 20000;
   // The overlay used to be hidden for the moment of each screenshot (so its
@@ -1037,8 +1039,8 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // Piper synthesis runs in the offscreen document (see offscreen.js for
-  // why — dynamic import() inside a service worker isn't allowed, the same
+  // Synthesis runs in the offscreen document (see offscreen.js for why —
+  // dynamic import() inside a service worker isn't allowed, the same
   // restriction that already forced OCR there) and plays back fully there
   // too, so there's no Chrome-speechSynthesis-cutoff-bug equivalent to
   // retry around here: it either completes or it errors — except a genuinely
@@ -1050,10 +1052,13 @@
   // logged and skipped — rather than letting one dropped message end the
   // session.
   const TTS_RESPONSE_TIMEOUT_MS = 20000;
+  function activeVoiceId() {
+    return STATE.ttsEngine === 'kokoro' ? STATE.kokoroVoiceId : STATE.piperVoiceId;
+  }
   // Takes already-normalized text (see speakOne, the only caller) — kept as
   // a separate function purely for the message round-trip/timeout plumbing,
   // not because it does any text processing of its own.
-  function speakPiperOnce(text) {
+  function speakTtsOnce(text) {
     return new Promise((resolve) => {
       let settled = false;
       const timer = setTimeout(() => {
@@ -1065,7 +1070,8 @@
         {
           type: 'MVR_TTS_SPEAK',
           text,
-          voiceId: STATE.piperVoiceId,
+          voiceId: activeVoiceId(),
+          engine: STATE.ttsEngine,
         },
         (resp) => {
           if (settled) return;
@@ -1095,7 +1101,7 @@
     // was entirely CJK plus a stray punctuation mark (e.g. "原作：雨宫." with
     // the name itself misread as a CJK glyph) would otherwise leave a lone
     // "." that's technically non-empty text but nothing worth sending to
-    // Piper.
+    // the TTS engine.
     if (!/[A-Za-z0-9]/.test(spoken)) {
       // Logged distinctly from a normal skip so it's clear *why* nothing
       // played, rather than looking like a silent drop.
@@ -1104,11 +1110,11 @@
     }
     setStatus('speaking', spoken.slice(0, 70));
     logEvent(`speaking: ${item.text}`);
-    const resp = await speakPiperOnce(spoken);
+    const resp = await speakTtsOnce(spoken);
     if (!resp || resp.ok === false) {
-      logEvent(`ERROR: Piper TTS failed (${(resp && resp.error) || 'unknown error'}) — skipping this line`);
+      logEvent(`ERROR: ${STATE.ttsEngine} TTS failed (${(resp && resp.error) || 'unknown error'}) — skipping this line`);
     } else if (typeof resp.synthMs === 'number') {
-      logEvent(`  piper: session=${resp.sessionMs}ms synth=${resp.synthMs}ms play-start=${resp.playStartMs}ms`);
+      logEvent(`  ${STATE.ttsEngine}: session=${resp.sessionMs}ms synth=${resp.synthMs}ms play-start=${resp.playStartMs}ms`);
     }
   }
 
@@ -1420,11 +1426,11 @@
     switch (msg.type) {
       case 'MVR_INIT':
         Object.assign(STATE, msg.settings || {});
-        // Fire-and-forget: gets the Piper session loading immediately
-        // instead of waiting for the first captured line to trigger it
-        // lazily, so that first line doesn't also eat the session's
-        // one-time cold-start cost.
-        chrome.runtime.sendMessage({ type: 'MVR_TTS_WARM', voiceId: STATE.piperVoiceId });
+        // Fire-and-forget: gets the TTS session loading immediately instead
+        // of waiting for the first captured line to trigger it lazily, so
+        // that first line doesn't also eat the session's one-time
+        // cold-start cost.
+        chrome.runtime.sendMessage({ type: 'MVR_TTS_WARM', voiceId: activeVoiceId(), engine: STATE.ttsEngine });
         sendResponse({ ok: true });
         break;
       case 'MVR_SET_SETTINGS':

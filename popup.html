@@ -23,13 +23,44 @@
 
     <section id="controls" class="hidden">
       <div class="field">
+        <label for="ttsEngineSelect">TTS engine</label>
+        <select id="ttsEngineSelect">
+          <option value="piper">Piper (faster, lighter)</option>
+          <option value="kokoro">Kokoro (more realistic, ~15-20x slower)</option>
+        </select>
+      </div>
+
+      <p class="hint">
+        Piper reads a line in well under a second. Kokoro sounds noticeably more natural but takes
+        several seconds per line to synthesize (benchmarked: ~0.3-0.4s for Piper vs. ~6s for Kokoro
+        per line) — expect real pauses between lines if you switch to it.
+      </p>
+
+      <div class="field" id="piperVoiceField">
         <label for="piperVoiceSelect">Voice (Piper, local neural)</label>
-        <select id="piperVoiceSelect"></select>
+        <div class="field-row">
+          <select id="piperVoiceSelect"></select>
+          <button id="piperVoicePlayBtn" type="button" class="play-btn" title="Play a sample of this voice">▶</button>
+        </div>
       </div>
 
       <p class="hint" id="piperHint">
         Switching voices downloads a ~60MB model from Hugging Face the first time you use that
         specific voice (cached after that, no re-download). Takes effect on your next line read.
+      </p>
+
+      <div class="field hidden" id="kokoroVoiceField">
+        <label for="kokoroVoiceSelect">Voice (Kokoro, local neural)</label>
+        <div class="field-row">
+          <select id="kokoroVoiceSelect"></select>
+          <button id="kokoroVoicePlayBtn" type="button" class="play-btn" title="Play a sample of this voice">▶</button>
+        </div>
+      </div>
+
+      <p class="hint hidden" id="kokoroHint">
+        Kokoro is one shared ~85MB model (downloaded from Hugging Face on first use, cached after
+        that) — switching voices between Kokoro voices doesn't re-download it, only a small
+        per-voice file.
       </p>
 
       <div class="field">

@@ -10,8 +10,9 @@ with a realistic local text-to-speech voice.
 - **On-page OCR** — recognizes dialogue directly from screenshots of what's
   visible, using PaddleOCR with a comic-text-detector rescue pass for
   panels with unusual bubble layouts or dense art.
-- **Local neural TTS** — reads lines aloud with Piper, entirely on-device;
-  multiple voices to choose from in the popup.
+- **Local neural TTS** — reads lines aloud entirely on-device, with a choice
+  of engine: Piper (fast, lightweight) or Kokoro (more realistic, larger);
+  multiple voices for each, selectable in the popup.
 - **Reads only the manga** — automatically ignores site chrome, ads, and
   synopsis/info-page text; only recognizes text that actually overlaps a
   manga image on the page.
@@ -30,7 +31,12 @@ with a realistic local text-to-speech voice.
 <img src="docs/screenshots/popup-settings.png" alt="Extension popup settings" width="300">
 
 - **Toggle (top-right)** — turns the extension on/off for the current site.
-- **Voice** — picks the Piper neural TTS voice used for reading.
+- **TTS engine** — Piper (faster, lighter — a separate ~60MB model per
+  voice, ~0.3-0.4s per line) or Kokoro (more realistic, one shared ~85MB
+  model, but ~15-20x slower — benchmarked at ~6s per line).
+- **Voice** — picks the specific voice used for reading, within whichever
+  engine is selected above. The **▶** button next to it plays a short
+  sample so you can hear a voice before committing to it.
 - **Reading order** — right-to-left for manga, left-to-right for
   comics/webtoons; controls which panel/bubble gets read first.
 - **Autoscroll speed** — how fast the page glides during Autoscroll.

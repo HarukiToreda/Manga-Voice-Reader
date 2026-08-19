@@ -8,7 +8,9 @@
 const DEFAULT_SETTINGS = {
   enabled: true,
   direction: 'rtl',
+  ttsEngine: 'piper', // 'piper' or 'kokoro'
   piperVoiceId: 'en_US-hfc_female-medium',
+  kokoroVoiceId: 'af_heart',
   autoScrollSpeed: 140,
 };
 
@@ -147,19 +149,20 @@ async function captureAndRecognize(windowId) {
   return runOcrInOffscreen(dataUrl);
 }
 
-// Piper TTS relay (experimental, opt-in): content.js has no path to the
-// offscreen document's lifecycle (it doesn't know whether one exists yet),
-// so it always goes through here first, same as the OCR capture flow above
-// — ensureOffscreenDocument() is a no-op once one's already running.
-function speakInOffscreen(text, voiceId) {
+// TTS relay (Piper or Kokoro, picked per-call via `engine`): content.js has
+// no path to the offscreen document's lifecycle (it doesn't know whether
+// one exists yet), so it always goes through here first, same as the OCR
+// capture flow above — ensureOffscreenDocument() is a no-op once one's
+// already running.
+function speakInOffscreen(text, voiceId, engine) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type: 'MVR_TTS_RUN', text, voiceId }, (resp) => {
+    chrome.runtime.sendMessage({ type: 'MVR_TTS_RUN', text, voiceId, engine }, (resp) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
       }
       if (!resp || resp.ok === false) {
-        reject(new Error((resp && resp.error) || 'Piper TTS failed'));
+        reject(new Error((resp && resp.error) || 'TTS failed'));
         return;
       }
       resolve(resp);
@@ -167,27 +170,27 @@ function speakInOffscreen(text, voiceId) {
   });
 }
 
-async function speakWithPiper(text, voiceId) {
+async function speakWithTts(text, voiceId, engine) {
   await ensureOffscreenDocument();
-  return speakInOffscreen(text, voiceId);
+  return speakInOffscreen(text, voiceId, engine);
 }
 
-// Best-effort: starts loading the Piper session (wasm init + voice model)
-// as soon as reading starts, rather than lazily on the first spoken line —
-// shaves the one-time session cold-start off the very first bubble's
-// latency. No return value worth waiting on; a real failure just surfaces
-// normally on the first actual MVR_TTS_SPEAK instead.
-async function warmPiper(voiceId) {
+// Best-effort: starts loading the TTS session (wasm init + first-use model
+// download/decode) as soon as reading starts, rather than lazily on the
+// first spoken line — shaves the one-time session cold-start off the very
+// first bubble's latency. No return value worth waiting on; a real failure
+// just surfaces normally on the first actual MVR_TTS_SPEAK instead.
+async function warmTts(voiceId, engine) {
   await ensureOffscreenDocument();
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'MVR_TTS_WARM_RUN', voiceId }, () => resolve());
+    chrome.runtime.sendMessage({ type: 'MVR_TTS_WARM_RUN', voiceId, engine }, () => resolve());
   });
 }
 
 // No return value worth waiting on — best-effort "make it so" (there may be
 // no offscreen document yet at all, e.g. stopping before anything was ever
 // read; that's fine).
-function stopPiperPlayback() {
+function stopTtsPlayback() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'MVR_TTS_STOP_RUN' }, () => resolve());
   });
@@ -224,17 +227,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'MVR_TTS_SPEAK') {
-    speakWithPiper(msg.text, msg.voiceId)
+    speakWithTts(msg.text, msg.voiceId, msg.engine)
       .then((resp) => sendResponse(resp))
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;
   }
   if (msg.type === 'MVR_TTS_STOP') {
-    stopPiperPlayback().then(() => sendResponse({ ok: true }));
+    stopTtsPlayback().then(() => sendResponse({ ok: true }));
     return true;
   }
   if (msg.type === 'MVR_TTS_WARM') {
-    warmPiper(msg.voiceId).then(() => sendResponse({ ok: true }));
+    warmTts(msg.voiceId, msg.engine).then(() => sendResponse({ ok: true }));
     return true;
   }
   if (msg.type === 'MVR_SET_SITE_ENABLED') {

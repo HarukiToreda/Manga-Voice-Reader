@@ -118,6 +118,22 @@ select {
   flex: 1;
 }
 
+.field-row {
+  display: flex;
+  gap: 6px;
+}
+.field-row select {
+  flex: 1;
+}
+.play-btn {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+}
+.play-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .hint {
   color: #6b7280;
   font-size: 11px;

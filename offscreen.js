@@ -9,6 +9,7 @@
 
 import { PaddleOcrService, InferenceSession, Tensor, ortEnv } from './lib/paddle-ocr.bundle.mjs';
 import { TtsSession } from './lib/piper-tts.bundle.mjs';
+import { KokoroTTS, env as kokoroEnv } from './lib/kokoro-tts.bundle.mjs';
 
 // The bundled wasm binary is the "simd-threaded" variant (capable of
 // splitting a single inference's compute across worker threads), but
@@ -339,6 +340,43 @@ async function recognizeViaBlocks(service, canvas, primaryWords) {
 // current session was built for.
 const DEFAULT_PIPER_VOICE_ID = 'en_US-hfc_female-medium';
 
+// ---------------- Kokoro TTS (local neural voice, alternative engine) ----------------
+//
+// Unlike Piper (a separate ~60MB model download per voice), Kokoro-82M is
+// one shared model — each voice is just a small style-vector .bin file
+// applied at generation time — so there's only ever one session to load
+// regardless of which voice is selected, no per-voice session-swapping
+// logic needed the way getPiperSession has.
+// wasmPaths points at lib/kokoro-ort/ (a separate copy from lib/ort/ — see
+// build-kokoro.js for why: @huggingface/transformers pins its own
+// onnxruntime-web version, not the 1.27.0 already used elsewhere in this
+// file). Model weights (~86MB at dtype "q8") and each voice's style-vector
+// file are fetched from Hugging Face on first use and cached by the
+// library itself via the Cache API — same remote-data-not-remote-code
+// distinction as the comic-text-detector model and Piper's voice models.
+kokoroEnv.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('lib/kokoro-ort/');
+kokoroEnv.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
+
+const KOKORO_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+const DEFAULT_KOKORO_VOICE_ID = 'af_heart';
+
+// dtype "q4" was benchmarked live against "q8" (same warm-session
+// methodology as the Piper-vs-Kokoro comparison above) and came back
+// *slower* on average (~6.57s/line vs q8's ~5.77s/line, 2026-08-19) on top
+// of lower audio quality — this wasm CPU backend has no real int4
+// acceleration, so dequantizing on the fly outweighs any bandwidth
+// savings. q8 wins on both axes; not worth making this configurable.
+let kokoroSessionPromise = null;
+function getKokoroSession() {
+  if (!kokoroSessionPromise) {
+    kokoroSessionPromise = KokoroTTS.from_pretrained(KOKORO_MODEL_ID, {
+      dtype: 'q8',
+      device: 'wasm',
+    });
+  }
+  return kokoroSessionPromise;
+}
+
 let piperSessionPromise = null;
 let piperSessionVoiceId = null;
 function getPiperSession(voiceId) {
@@ -375,24 +413,39 @@ function getPiperSession(voiceId) {
 // sequence). Holding the resolver directly lets a stop unblock it explicitly.
 let currentPlayback = null; // { audio, resolve }
 
-async function synthesizeAndPlay(text, voiceId) {
-  const t0 = performance.now();
+// Loads whichever engine's session/model is needed and returns a playable
+// WAV Blob — the one piece that differs between engines. Everything after
+// this (playback, interruption, timing) is shared.
+async function synthesizeWav(text, voiceId, engine) {
+  if (engine === 'kokoro') {
+    const tts = await getKokoroSession();
+    const audio = await tts.generate(text, { voice: voiceId || DEFAULT_KOKORO_VOICE_ID });
+    return audio.toBlob();
+  }
   const session = await getPiperSession(voiceId);
+  return session.predict(text);
+}
+
+async function synthesizeAndPlay(text, voiceId, engine) {
+  const t0 = performance.now();
+  const wavBlob = await synthesizeWav(text, voiceId, engine);
   const t1 = performance.now();
-  const wavBlob = await session.predict(text);
-  const t2 = performance.now();
   interruptCurrentPlayback();
   const url = URL.createObjectURL(wavBlob);
   const audio = new Audio(url);
-  const timing = { sessionMs: Math.round(t1 - t0), synthMs: Math.round(t2 - t1), playStartMs: 0 };
+  // sessionMs/synthMs used to be split (session load vs. actual synth) —
+  // collapsed into one combined figure since Kokoro's from_pretrained()
+  // and generate() are both awaited inside the shared synthesizeWav()
+  // helper now, with no seam between them visible from out here.
+  const timing = { sessionMs: 0, synthMs: Math.round(t1 - t0), playStartMs: 0 };
   try {
     await new Promise((resolve, reject) => {
       currentPlayback = { audio, resolve };
       audio.onended = resolve;
-      audio.onerror = () => reject(new Error('Piper audio playback failed'));
+      audio.onerror = () => reject(new Error('TTS audio playback failed'));
       audio.play().then(() => {
         // Timing only — doesn't affect the awaited onended above.
-        timing.playStartMs = Math.round(performance.now() - t2);
+        timing.playStartMs = Math.round(performance.now() - t1);
       }).catch(reject);
     });
   } finally {
@@ -419,7 +472,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'MVR_TTS_RUN') {
-    synthesizeAndPlay(msg.text, msg.voiceId)
+    synthesizeAndPlay(msg.text, msg.voiceId, msg.engine)
       .then((timing) => sendResponse({ ok: true, ...timing }))
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;
@@ -430,12 +483,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'MVR_TTS_WARM_RUN') {
-    // Fire-and-forget: kicks off TtsSession.create() (wasm init + first-use
+    // Fire-and-forget: kicks off session creation (wasm init + first-use
     // model download/decode) right when reading starts, instead of paying
     // that cost as part of the very first line's latency. Errors are
     // swallowed here — the real attempt (and its real error handling) still
     // happens on the first genuine MVR_TTS_RUN.
-    getPiperSession(msg.voiceId).catch(() => {});
+    (msg.engine === 'kokoro' ? getKokoroSession() : getPiperSession(msg.voiceId)).catch(() => {});
     sendResponse({ ok: true });
     return true;
   }

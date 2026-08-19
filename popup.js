@@ -16,8 +16,26 @@ const PIPER_VOICES = [
   { id: 'en_US-bryce-medium', label: 'Bryce (male)' },
 ];
 
+// Curated subset of Kokoro-82M's ~28 English voices (see the "Overall Grade"
+// column in kokoro-js's own README — highest-graded voices, covering both
+// genders and both US/UK accents, rather than dumping the whole catalog in).
+const KOKORO_VOICES = [
+  { id: 'af_heart', label: 'Heart (US female, default)' },
+  { id: 'af_bella', label: 'Bella (US female)' },
+  { id: 'af_nicole', label: 'Nicole (US female)' },
+  { id: 'af_sarah', label: 'Sarah (US female)' },
+  { id: 'af_kore', label: 'Kore (US female)' },
+  { id: 'am_fenrir', label: 'Fenrir (US male)' },
+  { id: 'am_michael', label: 'Michael (US male)' },
+  { id: 'am_puck', label: 'Puck (US male)' },
+  { id: 'bf_emma', label: 'Emma (UK female)' },
+  { id: 'bm_george', label: 'George (UK male)' },
+];
+
 const DEFAULT_SETTINGS = {
+  ttsEngine: 'piper', // 'piper' or 'kokoro'
   piperVoiceId: PIPER_VOICES[0].id,
+  kokoroVoiceId: KOKORO_VOICES[0].id,
   direction: 'rtl',
   autoScrollSpeed: 140,
 };
@@ -59,27 +77,66 @@ function sendToBackground(type, extra) {
   });
 }
 
-function populatePiperVoiceSelect() {
-  const sel = el('piperVoiceSelect');
+function populateVoiceSelect(selectId, voices) {
+  const sel = el(selectId);
   sel.innerHTML = '';
-  PIPER_VOICES.forEach((v) => {
+  voices.forEach((v) => {
     const opt = document.createElement('option');
     opt.value = v.id;
     opt.textContent = v.label;
     sel.appendChild(opt);
   });
-  sel.value = settings.piperVoiceId;
+}
+
+function applyEngineVisibility() {
+  const isKokoro = settings.ttsEngine === 'kokoro';
+  el('piperVoiceField').classList.toggle('hidden', isKokoro);
+  el('piperHint').classList.toggle('hidden', isKokoro);
+  el('kokoroVoiceField').classList.toggle('hidden', !isKokoro);
+  el('kokoroHint').classList.toggle('hidden', !isKokoro);
 }
 
 function applySettingsToUI() {
   el('directionSelect').value = settings.direction;
+  el('ttsEngineSelect').value = settings.ttsEngine;
   el('piperVoiceSelect').value = settings.piperVoiceId;
+  el('kokoroVoiceSelect').value = settings.kokoroVoiceId;
   el('autoScrollSpeedRange').value = settings.autoScrollSpeed;
   el('autoScrollSpeedValue').textContent = settings.autoScrollSpeed;
+  applyEngineVisibility();
 }
 
 function saveSettings() {
   chrome.storage.sync.set({ mvrSettings: settings });
+}
+
+const VOICE_PREVIEW_TEXT = 'Hello! This is what I sound like.';
+
+// Goes straight to background.js's MVR_TTS_SPEAK relay (the same one
+// content.js uses) rather than through sendToTab — synthesis/playback both
+// happen in the offscreen document regardless of which tab is active, so no
+// reading tab is needed just to preview a voice. Reads the select's current
+// value directly rather than `settings.*Voice Id` — same value in practice
+// (the change handlers below push immediately), but avoids depending on
+// that ordering.
+async function previewVoice(btn, engine, voiceId) {
+  if (btn.disabled) return; // already playing a preview
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    const resp = await sendToBackground('MVR_TTS_SPEAK', { text: VOICE_PREVIEW_TEXT, voiceId, engine });
+    if (!resp || resp.ok === false) throw new Error((resp && resp.error) || 'preview failed');
+  } catch (e) {
+    btn.textContent = '!';
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 1200);
+    return;
+  }
+  btn.textContent = original;
+  btn.disabled = false;
 }
 
 function pushSettings() {
@@ -175,7 +232,8 @@ async function init() {
     activeTabOrigin = null;
   }
 
-  populatePiperVoiceSelect();
+  populateVoiceSelect('piperVoiceSelect', PIPER_VOICES);
+  populateVoiceSelect('kokoroVoiceSelect', KOKORO_VOICES);
   applySettingsToUI();
   await refreshState();
   initPolling();
@@ -187,9 +245,24 @@ async function init() {
     setSiteEnabled(e.target.checked);
   });
 
+  el('ttsEngineSelect').addEventListener('change', (e) => {
+    settings.ttsEngine = e.target.value;
+    applyEngineVisibility();
+    pushSettings();
+  });
   el('piperVoiceSelect').addEventListener('change', (e) => {
     settings.piperVoiceId = e.target.value;
     pushSettings();
+  });
+  el('kokoroVoiceSelect').addEventListener('change', (e) => {
+    settings.kokoroVoiceId = e.target.value;
+    pushSettings();
+  });
+  el('piperVoicePlayBtn').addEventListener('click', () => {
+    previewVoice(el('piperVoicePlayBtn'), 'piper', el('piperVoiceSelect').value);
+  });
+  el('kokoroVoicePlayBtn').addEventListener('click', () => {
+    previewVoice(el('kokoroVoicePlayBtn'), 'kokoro', el('kokoroVoiceSelect').value);
   });
   el('directionSelect').addEventListener('change', (e) => {
     settings.direction = e.target.value;
