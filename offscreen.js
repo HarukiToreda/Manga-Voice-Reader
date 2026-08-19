@@ -413,22 +413,121 @@ function getPiperSession(voiceId) {
 // sequence). Holding the resolver directly lets a stop unblock it explicitly.
 let currentPlayback = null; // { audio, resolve }
 
-// Loads whichever engine's session/model is needed and returns a playable
-// WAV Blob — the one piece that differs between engines. Everything after
-// this (playback, interruption, timing) is shared.
+// ---------------- loudness normalization ----------------
+//
+// Piper and Kokoro (and different voices within each) come out at
+// noticeably different volumes — each TTS model's own training data sets
+// its own output level, nothing to do with anything on our end. Rather
+// than hand-tuning a fixed per-voice gain table (which would need
+// re-tuning any time a voice is swapped and can't really be validated
+// without a human actually listening), this measures each generated
+// clip's own RMS level and applies a single per-clip gain to bring it to
+// a common target — the same idea as ReplayGain/podcast loudness
+// normalization, just simple linear RMS instead of full LUFS. A peak
+// safety clamp keeps that gain from ever pushing samples into clipping.
+const TARGET_RMS = 0.1; // ~-20dBFS, a common speech loudness target
+const MAX_NORMALIZE_GAIN = 4; // caps amplification of near-silent clips
+const PEAK_CEILING = 0.98;
+
+let sharedAudioCtx = null;
+function getAudioContext() {
+  if (!sharedAudioCtx) sharedAudioCtx = new AudioContext();
+  return sharedAudioCtx;
+}
+
+function encodeWavFromAudioBuffer(audioBuffer) {
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const numFrames = audioBuffer.length;
+  const blockAlign = numChannels * 2; // 16-bit PCM
+  const dataSize = numFrames * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeString = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const channels = [];
+  for (let ch = 0; ch < numChannels; ch++) channels.push(audioBuffer.getChannelData(ch));
+  let offset = 44;
+  for (let i = 0; i < numFrames; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const s = Math.max(-1, Math.min(1, channels[ch][i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return buffer;
+}
+
+function measureRms(audioBuffer) {
+  let sumSquares = 0;
+  let sampleCount = 0;
+  let peak = 0;
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < data.length; i++) {
+      const s = data[i];
+      sumSquares += s * s;
+      if (Math.abs(s) > peak) peak = Math.abs(s);
+    }
+    sampleCount += data.length;
+  }
+  return { rms: Math.sqrt(sumSquares / Math.max(1, sampleCount)), peak };
+}
+
+// Returns { blob, rmsBefore, rmsAfter } — the before/after RMS is threaded
+// into the response timing object purely as debug telemetry (surfaces in
+// the popup's debug log), so a volume-level regression would actually be
+// visible instead of only found by ear.
+async function normalizeWavLoudness(wavBlob) {
+  const audioCtx = getAudioContext();
+  const audioBuffer = await audioCtx.decodeAudioData(await wavBlob.arrayBuffer());
+  const { rms, peak } = measureRms(audioBuffer);
+  if (rms < 1e-6 || peak < 1e-6) return { blob: wavBlob, rmsBefore: rms, rmsAfter: rms }; // near-silence
+  let gain = Math.min(TARGET_RMS / rms, MAX_NORMALIZE_GAIN);
+  if (peak * gain > PEAK_CEILING) gain = PEAK_CEILING / peak; // never clip
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < data.length; i++) data[i] *= gain;
+  }
+  const blob = new Blob([encodeWavFromAudioBuffer(audioBuffer)], { type: 'audio/wav' });
+  return { blob, rmsBefore: rms, rmsAfter: rms * gain };
+}
+
+// Loads whichever engine's session/model is needed and returns a playable,
+// loudness-normalized WAV Blob — the one piece that differs between
+// engines is upstream of normalizeWavLoudness; everything after that
+// (playback, interruption, timing) is shared.
 async function synthesizeWav(text, voiceId, engine) {
+  let wavBlob;
   if (engine === 'kokoro') {
     const tts = await getKokoroSession();
     const audio = await tts.generate(text, { voice: voiceId || DEFAULT_KOKORO_VOICE_ID });
-    return audio.toBlob();
+    wavBlob = audio.toBlob();
+  } else {
+    const session = await getPiperSession(voiceId);
+    wavBlob = await session.predict(text);
   }
-  const session = await getPiperSession(voiceId);
-  return session.predict(text);
+  return normalizeWavLoudness(wavBlob);
 }
 
 async function synthesizeAndPlay(text, voiceId, engine) {
   const t0 = performance.now();
-  const wavBlob = await synthesizeWav(text, voiceId, engine);
+  const { blob: wavBlob, rmsBefore, rmsAfter } = await synthesizeWav(text, voiceId, engine);
   const t1 = performance.now();
   interruptCurrentPlayback();
   const url = URL.createObjectURL(wavBlob);
@@ -437,7 +536,13 @@ async function synthesizeAndPlay(text, voiceId, engine) {
   // collapsed into one combined figure since Kokoro's from_pretrained()
   // and generate() are both awaited inside the shared synthesizeWav()
   // helper now, with no seam between them visible from out here.
-  const timing = { sessionMs: 0, synthMs: Math.round(t1 - t0), playStartMs: 0 };
+  const timing = {
+    sessionMs: 0,
+    synthMs: Math.round(t1 - t0),
+    playStartMs: 0,
+    rmsBefore: Math.round(rmsBefore * 1000) / 1000,
+    rmsAfter: Math.round(rmsAfter * 1000) / 1000,
+  };
   try {
     await new Promise((resolve, reject) => {
       currentPlayback = { audio, resolve };

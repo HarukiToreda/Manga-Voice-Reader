@@ -1114,7 +1114,9 @@
     if (!resp || resp.ok === false) {
       logEvent(`ERROR: ${STATE.ttsEngine} TTS failed (${(resp && resp.error) || 'unknown error'}) — skipping this line`);
     } else if (typeof resp.synthMs === 'number') {
-      logEvent(`  ${STATE.ttsEngine}: session=${resp.sessionMs}ms synth=${resp.synthMs}ms play-start=${resp.playStartMs}ms`);
+      logEvent(
+        `  ${STATE.ttsEngine}: session=${resp.sessionMs}ms synth=${resp.synthMs}ms play-start=${resp.playStartMs}ms rms=${resp.rmsBefore}->${resp.rmsAfter}`
+      );
     }
   }
 
