@@ -8,7 +8,7 @@
 // already read plays it again.
 
 (function () {
-  const MVR_VERSION = 104;
+  const MVR_VERSION = 107;
   // A previous injection's `data-mvr-observed` markers live on the actual
   // DOM elements, not in this closure — if the script runs again (repeat
   // "Start reading" click, or an update while the tab was never fully
@@ -561,9 +561,10 @@
         b.confidence >= STATE.minConfidence &&
         !MVR_LOGIC.isLikelyGarbage(b.text) &&
         !MVR_LOGIC.isReaderChrome(b.text) &&
-        !MVR_LOGIC.isUrlOnly(b.text)
+        !MVR_LOGIC.isUrlOnly(b.text) &&
+        !MVR_LOGIC.isLikelySoundEffect(b.text, b.confidence)
     );
-    logEvent(`${kept.length} kept after confidence/garbage filter`);
+    logEvent(`${kept.length} kept after confidence/garbage/SFX filter`);
     // A bubble that reconstructed from multiple merged words (isolated
     // single-token noise is excluded here — that's almost always real
     // screentone/UI-chrome garbage, not a misread) at decent confidence, but

@@ -238,6 +238,68 @@ function isUrlOnly(rawText) {
   return URL_ONLY_PATTERN.test(rawText.trim());
 }
 
+// Sound effects/onomatopoeia baked directly into the art (not a clean
+// speech bubble) OCR at meaningfully lower confidence than real dialogue —
+// confirmed live on a real capture: actual bubble dialogue consistently
+// landed 87-100% confidence, while stylized SFX lettering and a small
+// clothing-patch label landed 52-78%, even though that still cleared the
+// general (much lower) confidence floor used for everything else. A
+// dedicated SFX classifier isn't feasible from OCR output alone, but SFX
+// is reliably both short (checked live: 1-2 "words" after merging) and in
+// that lower confidence band — real short dialogue lines checked in the
+// same captures ("Yup!", "MINAMI-KUN!") stayed at 87%+, so this doesn't
+// cost genuine short interjections. Left at word-count >= 3 alone
+// (unfiltered): a misread bad enough to also tank a multi-word bubble's
+// confidence into this range is already caught by the existing
+// low-confidence path instead, same as before.
+const SFX_MAX_WORDS = 2;
+const SFX_MIN_CONFIDENCE = 80;
+// Second, independent signal for SFX the confidence check above can't
+// catch: crisply, boldly-printed onomatopoeia (as opposed to the
+// warped/hand-drawn kind) OCRs at just as high a confidence as real
+// dialogue — confirmed live on the same chapter, several of these survived
+// the confidence check untouched. Not real English words and not among the
+// short-interjection patterns isLikelyGarbage already exempts (hmm/um/uh/
+// er/ah/oh/eh), so a curated list is the only lever available, same
+// approach already used for READER_CHROME_PATTERNS. Necessarily incomplete
+// — SFX vocabulary varies by series/translator — this only ever covers
+// what's actually been observed; add to it as new cases turn up rather
+// than guessing ahead of time.
+const KNOWN_SFX_TOKENS = new Set([
+  'biki', 'zun', 'bara', 'hff', 'don', 'shuba', 'waku', 'doki', 'dokun', 'baki', 'zawa', 'gan',
+  // Added 2026-08-19, confirmed live on the same chapter's full audit —
+  // all survived the confidence check the same way the original batch
+  // above did (crisp, boldly-printed lettering).
+  'ta', 'su', 'shf', 'beki',
+]);
+// Stretched-out onomatopoeia ("GYUIIIIIN", "BUSHOAAAA") repeat a vowel an
+// arbitrary number of times — exact-matching the full token is fragile
+// (confirmed live: a 5-repeated-I spelling didn't match a curated entry
+// written with 4) since neither the source lettering nor OCR's read of it
+// is guaranteed consistent letter-for-letter. Matched by a short, stable
+// prefix instead — safe because no real English word starts with any of
+// these specific letter combinations, unlike the short exact-match tokens
+// above (a prefix check on "ta" would wrongly also catch "table"/"talk").
+const KNOWN_SFX_PREFIXES = ['gyui', 'scree', 'bushoaaaa', 'fwiish'];
+// Applies only to the curated-list checks below, not the confidence check
+// above — a match against a known SFX token/prefix is a much safer signal
+// than "short and low-confidence," so it's fine to tolerate more merged
+// trailing fragments (confirmed live: "WAku CPUMPED iae." — three
+// whitespace-split "words" after a garbled onomatopoeia cluster merged
+// into one bubble — needed this wider allowance; the exact-match token
+// itself is still what's actually being trusted, not the word count).
+const SFX_TOKEN_MAX_WORDS = 4;
+function isLikelySoundEffect(rawText, confidence) {
+  const words = rawText.trim().split(/\s+/);
+  if (words.length <= SFX_MAX_WORDS && confidence < SFX_MIN_CONFIDENCE) return true;
+  if (words.length <= SFX_TOKEN_MAX_WORDS) {
+    const firstBare = words[0].toLowerCase().replace(/[^a-z]/g, '');
+    if (KNOWN_SFX_TOKENS.has(firstBare)) return true;
+    if (KNOWN_SFX_PREFIXES.some((p) => firstBare.startsWith(p))) return true;
+  }
+  return false;
+}
+
 // Step 1: words -> lines. Two words belong to the same line only if their
 // vertical centers are close (same baseline) AND they sit close together
 // horizontally — a big horizontal gap means "different speech bubble at the
@@ -583,17 +645,39 @@ const CHAR_LETTER_MAP = { 0: 'o', 1: 'i', 5: 's', 8: 'b', '/': 'i', '\\': 'i' };
 // exists to prevent, so an unconfirmed digit guess isn't worth the extra
 // risk of corrupting a real digit-containing token.
 const ALWAYS_SWAP_CHARS = new Set(['/', '\\']);
+// '1' is genuinely ambiguous between "i" and "l" depending on the exact
+// glyph/font, unlike this map's other entries — CHAR_LETTER_MAP's single
+// default of 'i' can't express that. Confirmed live: "WI1L" needed the 'l'
+// reading ("WILL"), not the default 'i' reading ("WIIL", not a word, so the
+// primary swap correctly declined to fire — but left the digit in place
+// instead of trying the other plausible reading). Tried only as a fallback,
+// after the primary 'i' mapping has already had its chance to confirm
+// against the dictionary — this can only ever change behavior for tokens
+// where 'i' already failed to produce a real word, so it can't regress any
+// currently-correct 'i' case.
+const AMBIGUOUS_ALTERNATE_MAP = { 1: 'l' };
 const CONFUSABLE_TOKEN_PATTERN = /[A-Za-z0-9/\\]+/g;
+function swapChars(lower, map) {
+  let swapped = '';
+  for (const ch of lower) swapped += map[ch] || ch;
+  return swapped;
+}
 function fixDigitLetterConfusion(text, commonWords) {
   return text.replace(CONFUSABLE_TOKEN_PATTERN, (token) => {
     const confusableChars = [...token].filter((ch) => ch in CHAR_LETTER_MAP);
     if (!confusableChars.length || !/[a-zA-Z]/.test(token)) return token;
     const lower = token.toLowerCase();
-    let swapped = '';
-    for (const ch of lower) swapped += CHAR_LETTER_MAP[ch] || ch;
+    const swapped = swapChars(lower, CHAR_LETTER_MAP);
+    const restore = (s) => (token === token.toUpperCase() ? s.toUpperCase() : s);
+    if (swapped !== lower && commonWords && commonWords.has(swapped)) return restore(swapped);
+    if (
+      commonWords &&
+      confusableChars.some((ch) => ch in AMBIGUOUS_ALTERNATE_MAP)
+    ) {
+      const altSwapped = swapChars(lower, { ...CHAR_LETTER_MAP, ...AMBIGUOUS_ALTERNATE_MAP });
+      if (altSwapped !== lower && commonWords.has(altSwapped)) return restore(altSwapped);
+    }
     if (swapped === lower) return token;
-    const restored = token === token.toUpperCase() ? swapped.toUpperCase() : swapped;
-    if (commonWords && commonWords.has(swapped)) return restored;
     // Unconfirmed by the dictionary — before forcing the swap anyway, rule
     // out "genuine slash-separated real words" first ("and/or", "he/she"):
     // if every segment the token splits into around "/"/"\\" is *itself* a
@@ -611,7 +695,7 @@ function fixDigitLetterConfusion(text, commonWords) {
         .filter(Boolean)
         .every((segment) => commonWords.has(segment));
     if (looksLikeRealSlashSeparatedWords) return token;
-    if (confusableChars.every((ch) => ALWAYS_SWAP_CHARS.has(ch))) return restored;
+    if (confusableChars.every((ch) => ALWAYS_SWAP_CHARS.has(ch))) return restore(swapped);
     return token;
   });
 }
@@ -699,7 +783,29 @@ function fixDigitLetterConfusion(text, commonWords) {
 // ACORN, AISLE) — a single-letter prefix is simply too prolific for this
 // list's coverage to support safely, confirming the original instinct to
 // exclude 1-letter prefixes was correct. "AWAR" stays an accepted gap.
-const SHORT_WORD_PREFIXES = ['does', 'when', 'can', 'so', 'is', 'for'].sort((a, b) => b.length - a.length);
+// "saw", "put" added later (2026-08-19), confirmed live on a real chapter
+// ("SAWTHE"->"SAW THE", "PUTIT"->"PUT IT") and each individually
+// stress-tested against the full ~10k-word dictionary with zero collisions
+// before shipping. Three other candidates from the same chapter were tried
+// and rejected:
+// - "to"/"how" ("TOTELL"->"TO TELL", "HOWI"->"HOW I"): stress-testing found
+//   real collisions (TOPICS->"TO PICS", TOWARD->"TO WARD",
+//   TONIGHT->"TO NIGHT", HOWEVER->"HOW EVER", HOWTO->"HOW TO") — accepted
+//   gaps, same treatment as "AWAR" above, rather than risk corrupting those
+//   real words.
+// - "it's" ("IT'SNOT"->"IT'S NOT", zero dictionary collisions): rejected
+//   for a different reason — coreWord() below truncates every token at its
+//   *first* apostrophe before this loop ever runs, so "IT'SNOT"'s core is
+//   just "it" (a real word on its own), which trips the "already a real
+//   word" bailout before the prefix loop even sees it; the loop itself also
+//   matches prefixes against that same truncated `core`, so an
+//   apostrophe-containing prefix structurally can never match through this
+//   code path regardless of the bailout. Fixing that would mean reworking
+//   how every prefix is matched, not just adding one — not worth it for a
+//   single observed instance. Accepted gap.
+const SHORT_WORD_PREFIXES = ['does', 'when', 'can', 'saw', 'put', 'so', 'is', 'for'].sort(
+  (a, b) => b.length - a.length
+);
 
 // Curated rather than sourced from the general dictionary — see the comment
 // above for why the general list's short entries can't be trusted here.
@@ -729,10 +835,42 @@ function isRecognizedRemainder(remainderCore, commonWords) {
   return commonWords.has(remainderCore);
 }
 
+// Exact-match whitelist for specific fused words that need a full prefix
+// added to SHORT_WORD_PREFIXES to rescue — "it" itself was tried and
+// rejected (stress-testing found "itself" -> "it self", a very common
+// word, too costly to risk breaking every time it appears) — but a
+// single confirmed word-pair carries none of that collision risk since
+// it only ever matches that one exact fused spelling, not every word
+// starting with "it". Confirmed live: "ITWAS" (from "/TWAS" after
+// fixDigitLetterConfusion's slash-to-i swap above already ran) needed
+// this specifically.
+const FUSED_WORD_EXACT_FIXES = new Map([['itwas', 'it was']]);
+
 const WORD_TOKEN_PATTERN = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 function insertMissingWordSpace(text, commonWords) {
   if (!commonWords) return text;
   return text.replace(WORD_TOKEN_PATTERN, (token) => {
+    const exactFix = FUSED_WORD_EXACT_FIXES.get(token.toLowerCase());
+    if (exactFix) {
+      return token === token.toUpperCase() ? exactFix.toUpperCase() : exactFix;
+    }
+    // "it's" checked directly against the raw token, before the core-word
+    // bailout below: coreWord() truncates at the *first* apostrophe, so a
+    // fused "IT'SNOT" gets core "it" — already a real word on its own —
+    // which trips that bailout before the general prefix loop even runs,
+    // and that loop also matches prefixes against the same truncated
+    // core, so an apostrophe-containing prefix can't match through it
+    // regardless (confirmed live, this exact case: 2026-08-19). Handled
+    // here instead of reworking how every prefix matches; "it's" was
+    // already stress-tested with zero dictionary collisions, same bar as
+    // the other prefixes below.
+    const lowerToken = token.toLowerCase();
+    if (lowerToken.length > 4 && lowerToken.startsWith("it's")) {
+      const remainderCore = lowerToken.slice(4);
+      if (isRecognizedRemainder(remainderCore, commonWords)) {
+        return token.slice(0, 4) + ' ' + token.slice(4);
+      }
+    }
     const core = coreWord(token);
     if (commonWords.has(core)) return token; // already a real word — leave it alone
     for (const prefix of SHORT_WORD_PREFIXES) {
@@ -754,6 +892,7 @@ const MVR_LOGIC = {
   isLikelyGarbage,
   isReaderChrome,
   isUrlOnly,
+  isLikelySoundEffect,
   reconstructBubbles,
   orderBubbles,
   fixDigitLetterConfusion,
