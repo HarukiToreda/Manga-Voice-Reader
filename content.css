@@ -1,0 +1,83 @@
+/* Multi-second OCR captures give the browser's automatic scroll-anchoring
+   (compensating scrollY when off-screen content resizes, e.g. a lazily-
+   loaded image finishing load) more time to fire mid-read than before —
+   confirmed live as the page's scroll position silently drifting during
+   normal (non-autoscroll) reading with zero user input. This is a browser
+   behavior working against our own reading position tracking, not
+   something our own scroll code caused (that's gated behind autoscroll
+   mode). Disabling it site-wide while the extension is active removes the
+   drift at its source instead of trying to compensate for it downstream. */
+html {
+  overflow-anchor: none;
+}
+
+#mvr-overlay {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(30, 20, 55, 0.92);
+  color: #fff;
+  font: 13px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: 8px 12px;
+  border-radius: 999px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  max-width: 420px;
+  transition: opacity 0.2s ease;
+}
+
+#mvr-overlay button {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background 0.15s ease;
+}
+#mvr-overlay button:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+#mvr-overlay #mvr-pause-btn {
+  background: rgba(245, 185, 66, 0.35);
+}
+#mvr-overlay #mvr-pause-btn:hover {
+  background: rgba(245, 185, 66, 0.55);
+}
+#mvr-overlay #mvr-autoscroll-btn.mvr-active {
+  background: rgba(74, 222, 128, 0.35);
+}
+#mvr-overlay #mvr-autoscroll-btn.mvr-active:hover {
+  background: rgba(74, 222, 128, 0.55);
+}
+
+#mvr-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #6b7280;
+  flex: 0 0 auto;
+}
+
+#mvr-overlay.mvr-idle #mvr-dot { background: #6b7280; }
+#mvr-overlay.mvr-scanning #mvr-dot { background: #f5b942; animation: mvr-pulse 1s infinite ease-in-out; }
+#mvr-overlay.mvr-speaking #mvr-dot { background: #4ade80; animation: mvr-pulse 1s infinite ease-in-out; }
+#mvr-overlay.mvr-error #mvr-dot { background: #f87171; }
+
+@keyframes mvr-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.6; }
+}
+
+#mvr-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

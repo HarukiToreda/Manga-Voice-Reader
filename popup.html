@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Haruki's Manga Voice Reader</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Haruki's Manga Voice Reader</h1>
+      <label class="switch">
+        <input type="checkbox" id="enableToggle" />
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <div id="statusRow">
+      <span id="statusDot"></span>
+      <span id="statusText">Not active on this page</span>
+    </div>
+
+    <button id="startBtn" class="primary">Start reading this page</button>
+
+    <section id="controls" class="hidden">
+      <div class="field">
+        <label for="piperVoiceSelect">Voice (Piper, local neural)</label>
+        <select id="piperVoiceSelect"></select>
+      </div>
+
+      <p class="hint" id="piperHint">
+        Switching voices downloads a ~60MB model from Hugging Face the first time you use that
+        specific voice (cached after that, no re-download). Takes effect on your next line read.
+      </p>
+
+      <div class="field">
+        <label for="directionSelect">Reading order</label>
+        <select id="directionSelect">
+          <option value="rtl">Right to left (manga)</option>
+          <option value="ltr">Left to right (comics / webtoons)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="autoScrollSpeedRange">Autoscroll speed (<span id="autoScrollSpeedValue">140</span> px/sec)</label>
+        <input type="range" id="autoScrollSpeedRange" min="60" max="280" step="10" />
+      </div>
+      <p class="hint">
+        How fast the page glides during Autoscroll (the overlay button). Faster settings risk
+        gliding past dialogue between OCR checks — the default is tuned to reliably catch it.
+      </p>
+
+      <div class="button-row">
+        <button id="replayLastBtn">Re-read last panel</button>
+        <button id="replayVisibleBtn">Re-read visible panels</button>
+      </div>
+      <div class="button-row">
+        <button id="resetBtn">Forget everything read</button>
+        <button id="stopBtn" class="danger">Stop</button>
+      </div>
+
+      <p class="hint">
+        <span id="processedCount">0</span> line(s) read so far. Won't repeat while you sit still in
+        one spot — scroll away and back to hear it again.
+      </p>
+
+      <details id="logDetails">
+        <summary>Debug log</summary>
+        <button id="copyLogBtn" type="button">Copy log</button>
+        <pre id="logView">No log yet.</pre>
+      </details>
+
+      <details id="captureDetails">
+        <summary>Last screenshot captured</summary>
+        <p class="hint" style="margin-top: 6px">
+          Saves exactly what the OCR pipeline just worked from to Downloads\mvr-last-capture.png
+          (overwritten each time) — lets it be inspected as a file directly.
+        </p>
+        <button id="saveCaptureBtn" type="button">Save last capture to file</button>
+        <p id="saveCaptureStatus" class="hint"></p>
+      </details>
+    </section>
+
+    <footer>
+      OCR runs locally (PaddleOCR), reading a screenshot of what's currently on screen — this avoids
+      CDN hotlink/CORS blocks entirely, but means the tab needs to stay active and focused while
+      reading.
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

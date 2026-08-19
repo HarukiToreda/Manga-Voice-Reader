@@ -1,0 +1,20 @@
+{
+  "name": "manga-voice-reader-build",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "node build-paddle.js && node build-piper.js",
+    "e2e": "node e2e-test.js",
+    "e2e:suite": "node e2e-suite.js"
+  },
+  "dependencies": {
+    "@diffusionstudio/piper-wasm": "^1.0.0",
+    "@mintplex-labs/piper-tts-web": "^1.0.5",
+    "onnxruntime-web": "^1.27.0",
+    "ppu-paddle-ocr": "^6.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright": "^1.62.1"
+  }
+}

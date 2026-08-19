@@ -1,0 +1,4 @@
+node_modules/
+tools/.playwright-profile*/
+dist/
+
