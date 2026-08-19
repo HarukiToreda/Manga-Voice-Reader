@@ -1,6 +1,7 @@
 {
   "name": "manga-voice-reader-build",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "commonjs",
   "scripts": {
     "build": "node build-paddle.js && node build-piper.js",
