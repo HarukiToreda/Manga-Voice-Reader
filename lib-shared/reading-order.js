@@ -83,6 +83,14 @@ function clusterByProximity(items, canMerge) {
 // accidental code-like tokens rather than real words.
 function isLikelyGarbage(rawText) {
   const trimmed = rawText.trim();
+  // "I" and "a" are the only two legitimate standalone one-letter English
+  // words — a bubble that's genuinely just "I" (e.g. trailing off mid-
+  // sentence) was getting caught by the length check below and dropped
+  // entirely, silently losing real dialogue. Checked before that check,
+  // not folded into it, so anything else under 2 characters (stray
+  // punctuation/noise) is still correctly rejected.
+  const bareLower = trimmed.replace(/[^a-zA-Z]/g, '').toLowerCase();
+  if (bareLower === 'i' || bareLower === 'a') return false;
   if (trimmed.length < 2) return true;
   const letters = trimmed.replace(/[^a-zA-Z]/g, '');
   const words = trimmed.split(/\s+/);
@@ -291,6 +299,15 @@ const KNOWN_SFX_PREFIXES = ['gyui', 'scree', 'bushoaaaa', 'fwiish'];
 const SFX_TOKEN_MAX_WORDS = 4;
 function isLikelySoundEffect(rawText, confidence) {
   const words = rawText.trim().split(/\s+/);
+  // A standalone "I" (e.g. trailing off mid-sentence) has very little for
+  // OCR to work with and can land at low confidence purely from that, not
+  // from being genuinely garbled — the same short-and-low-confidence shape
+  // as real SFX, but real dialogue. Checked before that heuristic so it's
+  // never dropped by it.
+  if (words.length === 1) {
+    const bare = words[0].toLowerCase().replace(/[^a-z]/g, '');
+    if (bare === 'i' || bare === 'a') return false;
+  }
   if (words.length <= SFX_MAX_WORDS && confidence < SFX_MIN_CONFIDENCE) return true;
   if (words.length <= SFX_TOKEN_MAX_WORDS) {
     const firstBare = words[0].toLowerCase().replace(/[^a-z]/g, '');
@@ -616,35 +633,36 @@ function orderBubbles(bubbles, direction, panelBorders, canvasWidth) {
   return orderedPanels.flatMap((p) => orderBubblesFlat(panels[p.panelIndex], direction));
 }
 
-// Fixes a digit or stray punctuation mark misread as its letter lookalike
-// inside an otherwise-alpha token (e.g. "S0ON", or "APOLOG/ZE" — confirmed
-// live: a stylized bold "I" recognized as a forward slash, which is worse
-// than a typo once spoken, since a bare "/" mid-word gets read aloud as a
-// literal "slash" rather than silently mispronounced). A digit or slash
-// embedded in a run of letters is essentially never intentional in comic
-// dialogue, unlike a full-letter substitution (which can coincidentally turn
-// a legitimate name into a different real word — tried and rejected, see
-// reading-order tuning history). Primary path is gated on the swapped result
-// being an actual dictionary word, so a token that isn't really a near-miss
-// (a stray page-number fragment like "144" glued to noise, or genuine
-// punctuation like "and/or") is left alone rather than "corrected" into
-// different noise — confirmed "and/or" specifically stays untouched:
-// swapping "/" -> "i" gives "andior", not a real word.
-const CHAR_LETTER_MAP = { 0: 'o', 1: 'i', 5: 's', 8: 'b', '/': 'i', '\\': 'i' };
-// This project's word list (~10k entries, common-words.js) is a frequency
-// list, not exhaustive vocabulary — it doesn't happen to include every real
-// word a manga character might plausibly say (e.g. "apologize" isn't in it,
-// confirmed directly), so the dictionary gate alone would still leave a
-// legitimate correction unapplied and the raw "/" in place to be read as
-// "slash". For these two punctuation marks specifically (not digits), apply
-// the swap anyway even without dictionary confirmation — a best-guess wrong
-// letter is a strictly better failure mode than a punctuation mark spoken
-// literally mid-word. Digits don't get this same unconditional fallback:
-// left unswapped, a stray digit just reads as an ordinary number word
-// ("s zero s" for "S0S") — odd, but not the jarring "slash" failure this
-// exists to prevent, so an unconfirmed digit guess isn't worth the extra
-// risk of corrupting a real digit-containing token.
-const ALWAYS_SWAP_CHARS = new Set(['/', '\\']);
+// '/' and '\\' are always misreads of a stylized "I" in this project's
+// captures, never genuine punctuation — confirmed directly (user report,
+// 2026-08-19): every slash actually seen has been a misread letter, never
+// real slash-separated punctuation like "and/or". An earlier version of
+// this fix tried to protect that "and/or" case by leaving a token alone
+// whenever every segment around the slash was independently a real
+// dictionary word — dropped per that same report, unconditional now, no
+// exceptions. Handled as a plain global replace *before* tokenization
+// below (not inside the per-token digit-confusion loop) specifically so it
+// also catches a slash with no adjacent letters at all — e.g. OCR
+// detecting a lone "/" as its own token — which the old per-token version
+// missed entirely (it bailed out early on any token with zero letters).
+function replaceSlashes(text) {
+  return text.replace(/[/\\]/g, 'i');
+}
+
+// Fixes a digit misread as its letter lookalike inside an otherwise-alpha
+// token (e.g. "S0ON"). A digit embedded in a run of letters is essentially
+// never intentional in comic dialogue, unlike a full-letter substitution
+// (which can coincidentally turn a legitimate name into a different real
+// word — tried and rejected, see reading-order tuning history). Gated on
+// the swapped result being an actual dictionary word, so a token that
+// isn't really a near-miss (a stray page-number fragment like "144" glued
+// to noise) is left alone rather than "corrected" into different noise.
+// Unlike the slash case above, an unswapped stray digit just reads as an
+// ordinary number word ("s zero s" for "S0S") — odd, but not the jarring
+// "slash"-spoken-aloud failure that justified an unconditional swap there,
+// so an unconfirmed digit guess still isn't worth the extra risk of
+// corrupting a real digit-containing token.
+const CHAR_LETTER_MAP = { 0: 'o', 1: 'i', 5: 's', 8: 'b' };
 // '1' is genuinely ambiguous between "i" and "l" depending on the exact
 // glyph/font, unlike this map's other entries — CHAR_LETTER_MAP's single
 // default of 'i' can't express that. Confirmed live: "WI1L" needed the 'l'
@@ -656,46 +674,24 @@ const ALWAYS_SWAP_CHARS = new Set(['/', '\\']);
 // where 'i' already failed to produce a real word, so it can't regress any
 // currently-correct 'i' case.
 const AMBIGUOUS_ALTERNATE_MAP = { 1: 'l' };
-const CONFUSABLE_TOKEN_PATTERN = /[A-Za-z0-9/\\]+/g;
+const CONFUSABLE_TOKEN_PATTERN = /[A-Za-z0-9]+/g;
 function swapChars(lower, map) {
   let swapped = '';
   for (const ch of lower) swapped += map[ch] || ch;
   return swapped;
 }
 function fixDigitLetterConfusion(text, commonWords) {
-  return text.replace(CONFUSABLE_TOKEN_PATTERN, (token) => {
+  return replaceSlashes(text).replace(CONFUSABLE_TOKEN_PATTERN, (token) => {
     const confusableChars = [...token].filter((ch) => ch in CHAR_LETTER_MAP);
     if (!confusableChars.length || !/[a-zA-Z]/.test(token)) return token;
     const lower = token.toLowerCase();
     const swapped = swapChars(lower, CHAR_LETTER_MAP);
     const restore = (s) => (token === token.toUpperCase() ? s.toUpperCase() : s);
     if (swapped !== lower && commonWords && commonWords.has(swapped)) return restore(swapped);
-    if (
-      commonWords &&
-      confusableChars.some((ch) => ch in AMBIGUOUS_ALTERNATE_MAP)
-    ) {
+    if (commonWords && confusableChars.some((ch) => ch in AMBIGUOUS_ALTERNATE_MAP)) {
       const altSwapped = swapChars(lower, { ...CHAR_LETTER_MAP, ...AMBIGUOUS_ALTERNATE_MAP });
       if (altSwapped !== lower && commonWords.has(altSwapped)) return restore(altSwapped);
     }
-    if (swapped === lower) return token;
-    // Unconfirmed by the dictionary — before forcing the swap anyway, rule
-    // out "genuine slash-separated real words" first ("and/or", "he/she"):
-    // if every segment the token splits into around "/"/"\\" is *itself* a
-    // real standalone dictionary word, that's strong independent evidence
-    // the slash is intentional punctuation, not a misread letter, even
-    // though the merged "andior" form obviously isn't a word either.
-    // Confirmed this exact check is what's needed: "and/or" splits into
-    // "and" + "or", both real words, so it correctly stays untouched, while
-    // "apolog/ze" splits into "apolog" + "ze" — neither real — so the swap
-    // proceeds.
-    const looksLikeRealSlashSeparatedWords =
-      commonWords &&
-      lower
-        .split(/[/\\]/)
-        .filter(Boolean)
-        .every((segment) => commonWords.has(segment));
-    if (looksLikeRealSlashSeparatedWords) return token;
-    if (confusableChars.every((ch) => ALWAYS_SWAP_CHARS.has(ch))) return restore(swapped);
     return token;
   });
 }
@@ -846,6 +842,60 @@ function isRecognizedRemainder(remainderCore, commonWords) {
 // this specifically.
 const FUSED_WORD_EXACT_FIXES = new Map([['itwas', 'it was']]);
 
+// A bubble's text sometimes wraps across multiple drawn lines and breaks
+// mid-word with a trailing hyphen — e.g. a name ending one line as
+// "MINAMI-" with its honorific suffix "KUN" starting the next. That's a
+// purely typographic line-wrap artifact, not a real spoken pause, so the
+// hyphen itself should go — but the two halves are joined with a space,
+// not fused into one solid word. Fully fusing them ("MINAMIKUN") was
+// tried first and reverted per direct user report, 2026-08-19: Piper's
+// phonemizer mangled the novel fused spelling ("Mynanekun" instead of the
+// correct sound), since it no longer resembles two recognizable words —
+// context-sensitive English letter-to-sound rules are fragile on long
+// unfamiliar strings. A space avoids that: each half stays a normal-length
+// word the phonemizer already handles correctly, while the hyphen (which
+// read as an unwanted pause) is gone.
+// Applied as its own pass over the whole string (not per-token like the
+// fixes above) since it has to look at two adjacent word-fragments at
+// once, whether or not bubble-reconstruction happened to leave a space
+// between them.
+// Both sides required to be >=3 letters specifically to avoid also
+// matching a genuine stutter ("M-M- M-M- MINAMI- KUN...!?", confirmed live
+// in this same project's captures) — stutter fragments are 1-2 letters
+// repeated, real line-wrapped word halves aren't.
+const HYPHEN_LINE_BREAK_PATTERN = /([A-Za-z]{3,})-\s*([A-Za-z]{3,})/g;
+function joinHyphenatedLineBreak(text) {
+  return text.replace(HYPHEN_LINE_BREAK_PATTERN, '$1 $2');
+}
+
+// Piper/Kokoro's phonemizers are English-only — there's no way to give a
+// romanized Japanese name genuinely Japanese pronunciation with either
+// engine as currently wired up, only nudge the *English* reading closer.
+// Confirmed live: "minami" (the letters are correct — see the slash-to-i
+// fix above, which was fixing the right letters all along) still read
+// with a long-I first syllable ("my-nah-mi") instead of the correct short
+// "mih-nah-mi", because a single "i" in an open first syllable commonly
+// defaults to long under English letter-to-sound rules (same reason
+// "item"/"iron" have a long I). Respelled with a doubled consonant to
+// force the standard English closed-syllable/short-vowel reading instead
+// (the same orthographic signal that keeps "inn" short) — an educated
+// guess based on English spelling conventions, not something verified by
+// ear here, so treat as a first attempt to be confirmed by actually
+// listening to it, not a guaranteed fix.
+// Sourced from lib-shared/name-pronunciations.js (a curated database of
+// common Japanese honorifics/given names/surnames, injected alongside this
+// file the same way common-words.js is) — passed in rather than read off
+// the global directly, same pattern as commonWords throughout this file,
+// so this stays testable in isolation (see tools/*.js).
+function respellForPronunciation(text, namePronunciations) {
+  if (!namePronunciations) return text;
+  return text.replace(/[A-Za-z]+/g, (word) => {
+    const fix = namePronunciations[word.toLowerCase()];
+    if (!fix) return word;
+    return word === word.toUpperCase() ? fix.toUpperCase() : fix;
+  });
+}
+
 const WORD_TOKEN_PATTERN = /[A-Za-z]+(?:'[A-Za-z]+)?/g;
 function insertMissingWordSpace(text, commonWords) {
   if (!commonWords) return text;
@@ -897,6 +947,8 @@ const MVR_LOGIC = {
   orderBubbles,
   fixDigitLetterConfusion,
   insertMissingWordSpace,
+  joinHyphenatedLineBreak,
+  respellForPronunciation,
 };
 
 if (typeof module !== 'undefined' && module.exports) {

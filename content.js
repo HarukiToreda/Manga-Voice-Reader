@@ -8,7 +8,7 @@
 // already read plays it again.
 
 (function () {
-  const MVR_VERSION = 107;
+  const MVR_VERSION = 114;
   // A previous injection's `data-mvr-observed` markers live on the actual
   // DOM elements, not in this closure — if the script runs again (repeat
   // "Start reading" click, or an update while the tab was never fully
@@ -34,6 +34,11 @@
   // words, not for any broader spell-correction (tried and rejected: too
   // prone to corrupting legitimate character/place names).
   const commonWordsSet = typeof MVR_COMMON_WORDS !== 'undefined' ? new Set(MVR_COMMON_WORDS) : null;
+  // From lib-shared/name-pronunciations.js (also injected alongside this
+  // script) — curated Japanese name/honorific respellings for
+  // respellForPronunciation. See that file for why these are educated
+  // guesses, not verified-by-ear fixes.
+  const namePronunciations = typeof MVR_NAME_PRONUNCIATIONS !== 'undefined' ? MVR_NAME_PRONUNCIATIONS : null;
 
   const STATE = {
     enabled: true,
@@ -697,9 +702,14 @@
     const cutoffTopY = rawCutoffTopY === null ? null : deviceYToCssY(rawCutoffTopY, height);
     return {
       texts: ordered.map((b) =>
-        MVR_LOGIC.insertMissingWordSpace(
-          MVR_LOGIC.fixDigitLetterConfusion(b.text.replace(/\s+/g, ' ').trim(), commonWordsSet),
-          commonWordsSet
+        MVR_LOGIC.respellForPronunciation(
+          MVR_LOGIC.joinHyphenatedLineBreak(
+            MVR_LOGIC.insertMissingWordSpace(
+              MVR_LOGIC.fixDigitLetterConfusion(b.text.replace(/\s+/g, ' ').trim(), commonWordsSet),
+              commonWordsSet
+            )
+          ),
+          namePronunciations
         )
       ),
       topY,

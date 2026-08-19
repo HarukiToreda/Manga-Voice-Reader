@@ -59,7 +59,7 @@ async function startReadingInTab(tabId) {
     await chrome.scripting.insertCSS({ target: { tabId }, files: ['content.css'] });
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['lib-shared/common-words.js', 'lib-shared/reading-order.js', 'content.js'],
+      files: ['lib-shared/common-words.js', 'lib-shared/name-pronunciations.js', 'lib-shared/reading-order.js', 'content.js'],
     });
     const { mvrSettings } = await chrome.storage.sync.get('mvrSettings');
     await chrome.tabs.sendMessage(tabId, {
