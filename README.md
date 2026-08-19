@@ -1,5 +1,7 @@
 # Haruki's Manga Voice Reader
 
+[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/HarukiToreda)
+
 A Chrome extension that reads manga and comic panels aloud as you browse — no
 pre-processed audiobooks, no site cooperation required. It watches what's on
 screen, recognizes the text in each panel with on-page OCR, and speaks it
