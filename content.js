@@ -44,6 +44,7 @@
     minImgSize: 320,
     minConfidence: 45,
     autoScrollSpeed: 140, // px/sec — user-configurable via the popup slider, see AUTOSCROLL_MIN/MAX_SPEED_PX_PER_SEC for the clamped range actually used
+    volume: 100, // 0-100, applied at playback time on top of offscreen.js's own loudness normalization
     status: 'idle',
   };
 
@@ -234,12 +235,11 @@
   // ---------------- status overlay ----------------
 
   // Interactive, not just a status readout — Read forces an immediate
-  // capture of whatever's currently visible (same as the popup's "Re-read
-  // visible panels"), Pause is a quick in-page pause (see pauseReading() —
-  // deliberately lighter than the popup's Stop: a page refresh resumes
-  // reading normally rather than staying off), Autoscroll drives the page
-  // for you (see startAutoScroll()), so all three common actions are
-  // reachable without opening the popup at all.
+  // capture of whatever's currently visible, Pause is a quick in-page pause
+  // (see pauseReading() — deliberately lighter than the popup's Stop: a
+  // page refresh resumes reading normally rather than staying off),
+  // Autoscroll drives the page for you (see startAutoScroll()), so all
+  // three common actions are reachable without opening the popup at all.
   function ensureOverlay() {
     let el = document.getElementById('mvr-overlay');
     if (el) return el;
@@ -265,32 +265,7 @@
     // click), landing our handler before that hijack point.
     el.querySelector('#mvr-read-btn').addEventListener('mousedown', (e) => {
       e.stopPropagation();
-      // Undo pauseReading()'s state (stopRequested latched true, STATE.enabled
-      // false) — without this, a capture still runs but startSpeaking()'s
-      // while loop refuses to speak anything (gated on !stopRequested) and
-      // never drains the queue, so status gets stuck on "Reading…" forever:
-      // looks like it's perpetually loading.
-      stopRequested = false;
-      STATE.enabled = true;
-      chrome.runtime.sendMessage({ type: 'MVR_SET_SITE_ENABLED', origin: location.origin, enabled: true });
-      // User-requested: highlighting real page text (a synopsis, a
-      // comment, anything selectable — not manga art) and pressing Read
-      // should read *that* instead of OCRing the visible panel. No OCR
-      // involved at all here — this is genuine DOM text, so it goes
-      // straight into the same speech queue/TTS path OCR'd text uses,
-      // skipping the panel-capture pipeline entirely. Falls through to the
-      // normal panel-OCR behavior whenever there's no selection (or it's
-      // just a stray caret/whitespace click, not an actual highlight).
-      const selectedText = (window.getSelection() || '').toString().trim();
-      if (selectedText) {
-        logEvent(`Reading selected text (${selectedText.length} chars) instead of OCR'ing the panel`);
-        splitIntoSentences(selectedText).forEach((sentence, idx) => {
-          speechQueue.push({ text: sentence, newBubble: idx === 0 });
-        });
-        startSpeaking();
-        return;
-      }
-      runCaptureOCR(true);
+      readNow();
     });
     el.querySelector('#mvr-autoscroll-btn').addEventListener('mousedown', (e) => {
       e.stopPropagation();
@@ -1072,6 +1047,7 @@
           text,
           voiceId: activeVoiceId(),
           engine: STATE.ttsEngine,
+          volume: STATE.volume,
         },
         (resp) => {
           if (settled) return;
@@ -1185,6 +1161,38 @@
     chrome.runtime.sendMessage({ type: 'MVR_TTS_STOP' });
     speechQueue.length = 0;
     setStatus('idle', 'Paused');
+  }
+
+  // Shared by the overlay's Read button and the popup's Read button
+  // (MVR_READ_NOW) — forces an immediate capture of whatever's currently
+  // visible, undoing stopReading()/pauseReading()'s state first (stopRequested
+  // latched true, STATE.enabled false) so this also works as a "resume" after
+  // Stop/Pause: without this, a capture still runs but startSpeaking()'s
+  // while loop refuses to speak anything (gated on !stopRequested) and never
+  // drains the queue, so status gets stuck on "Reading…" forever — looks
+  // like it's perpetually loading.
+  function readNow() {
+    stopRequested = false;
+    STATE.enabled = true;
+    chrome.runtime.sendMessage({ type: 'MVR_SET_SITE_ENABLED', origin: location.origin, enabled: true });
+    // User-requested: highlighting real page text (a synopsis, a comment,
+    // anything selectable — not manga art) and pressing Read should read
+    // *that* instead of OCRing the visible panel. No OCR involved at all
+    // here — this is genuine DOM text, so it goes straight into the same
+    // speech queue/TTS path OCR'd text uses, skipping the panel-capture
+    // pipeline entirely. Falls through to the normal panel-OCR behavior
+    // whenever there's no selection (or it's just a stray caret/whitespace
+    // click, not an actual highlight).
+    const selectedText = (window.getSelection() || '').toString().trim();
+    if (selectedText) {
+      logEvent(`Reading selected text (${selectedText.length} chars) instead of OCR'ing the panel`);
+      splitIntoSentences(selectedText).forEach((sentence, idx) => {
+        speechQueue.push({ text: sentence, newBubble: idx === 0 });
+      });
+      startSpeaking();
+      return;
+    }
+    runCaptureOCR(true);
   }
 
   // When set, the glide is steering toward this absolute window.scrollY
@@ -1468,19 +1476,8 @@
         stopReading();
         sendResponse({ ok: true });
         break;
-      case 'MVR_REPLAY_LAST':
-        if (lastSpokenText) {
-          speechQueue.unshift({ text: lastSpokenText, newBubble: true });
-          startSpeaking();
-        }
-        sendResponse({ ok: true });
-        break;
-      case 'MVR_REPLAY_VISIBLE':
-        runCaptureOCR(true); // force: also include bubbles cut off at the bottom edge
-        sendResponse({ ok: true });
-        break;
-      case 'MVR_RESET_PROGRESS':
-        lastReadPosition = null;
+      case 'MVR_READ_NOW':
+        readNow();
         sendResponse({ ok: true });
         break;
       default:

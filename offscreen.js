@@ -525,13 +525,19 @@ async function synthesizeWav(text, voiceId, engine) {
   return normalizeWavLoudness(wavBlob);
 }
 
-async function synthesizeAndPlay(text, voiceId, engine) {
+async function synthesizeAndPlay(text, voiceId, engine, volume) {
   const t0 = performance.now();
   const { blob: wavBlob, rmsBefore, rmsAfter } = await synthesizeWav(text, voiceId, engine);
   const t1 = performance.now();
   interruptCurrentPlayback();
   const url = URL.createObjectURL(wavBlob);
   const audio = new Audio(url);
+  // 100 = unchanged from the loudness-normalized level normalizeWavLoudness
+  // already produced — this is a playback-time scalar on top of that via
+  // the <audio> element's own native .volume, not a second normalization
+  // pass. Falls back to 1 (100%) if volume is missing/undefined, e.g. an
+  // older cached settings object that predates this field.
+  audio.volume = Math.max(0, Math.min(1, (typeof volume === 'number' ? volume : 100) / 100));
   // sessionMs/synthMs used to be split (session load vs. actual synth) —
   // collapsed into one combined figure since Kokoro's from_pretrained()
   // and generate() are both awaited inside the shared synthesizeWav()
@@ -542,6 +548,7 @@ async function synthesizeAndPlay(text, voiceId, engine) {
     playStartMs: 0,
     rmsBefore: Math.round(rmsBefore * 1000) / 1000,
     rmsAfter: Math.round(rmsAfter * 1000) / 1000,
+    appliedVolume: audio.volume,
   };
   try {
     await new Promise((resolve, reject) => {
@@ -577,7 +584,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'MVR_TTS_RUN') {
-    synthesizeAndPlay(msg.text, msg.voiceId, msg.engine)
+    synthesizeAndPlay(msg.text, msg.voiceId, msg.engine, msg.volume)
       .then((timing) => sendResponse({ ok: true, ...timing }))
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;

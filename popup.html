@@ -30,12 +30,6 @@
         </select>
       </div>
 
-      <p class="hint">
-        Piper reads a line in well under a second. Kokoro sounds noticeably more natural but takes
-        several seconds per line to synthesize (benchmarked: ~0.3-0.4s for Piper vs. ~6s for Kokoro
-        per line) — expect real pauses between lines if you switch to it.
-      </p>
-
       <div class="field" id="piperVoiceField">
         <label for="piperVoiceSelect">Voice (Piper, local neural)</label>
         <div class="field-row">
@@ -44,10 +38,7 @@
         </div>
       </div>
 
-      <p class="hint" id="piperHint">
-        Switching voices downloads a ~60MB model from Hugging Face the first time you use that
-        specific voice (cached after that, no re-download). Takes effect on your next line read.
-      </p>
+      <p class="hint" id="piperHint">First use of a voice downloads it (~60MB, cached after).</p>
 
       <div class="field hidden" id="kokoroVoiceField">
         <label for="kokoroVoiceSelect">Voice (Kokoro, local neural)</label>
@@ -57,11 +48,12 @@
         </div>
       </div>
 
-      <p class="hint hidden" id="kokoroHint">
-        Kokoro is one shared ~85MB model (downloaded from Hugging Face on first use, cached after
-        that) — switching voices between Kokoro voices doesn't re-download it, only a small
-        per-voice file.
-      </p>
+      <p class="hint hidden" id="kokoroHint">One shared ~85MB model (downloaded once, cached after) — switching voices is quick.</p>
+
+      <div class="field">
+        <label for="volumeRange">Volume (<span id="volumeValue">100</span>%)</label>
+        <input type="range" id="volumeRange" min="0" max="100" step="5" />
+      </div>
 
       <div class="field">
         <label for="directionSelect">Reading order</label>
@@ -75,24 +67,11 @@
         <label for="autoScrollSpeedRange">Autoscroll speed (<span id="autoScrollSpeedValue">140</span> px/sec)</label>
         <input type="range" id="autoScrollSpeedRange" min="60" max="280" step="10" />
       </div>
-      <p class="hint">
-        How fast the page glides during Autoscroll (the overlay button). Faster settings risk
-        gliding past dialogue between OCR checks — the default is tuned to reliably catch it.
-      </p>
 
       <div class="button-row">
-        <button id="replayLastBtn">Re-read last panel</button>
-        <button id="replayVisibleBtn">Re-read visible panels</button>
-      </div>
-      <div class="button-row">
-        <button id="resetBtn">Forget everything read</button>
+        <button id="readBtn">Read</button>
         <button id="stopBtn" class="danger">Stop</button>
       </div>
-
-      <p class="hint">
-        <span id="processedCount">0</span> line(s) read so far. Won't repeat while you sit still in
-        one spot — scroll away and back to hear it again.
-      </p>
 
       <details id="logDetails">
         <summary>Debug log</summary>
@@ -110,12 +89,6 @@
         <p id="saveCaptureStatus" class="hint"></p>
       </details>
     </section>
-
-    <footer>
-      OCR runs locally (PaddleOCR), reading a screenshot of what's currently on screen — this avoids
-      CDN hotlink/CORS blocks entirely, but means the tab needs to stay active and focused while
-      reading.
-    </footer>
 
     <script src="popup.js"></script>
   </body>

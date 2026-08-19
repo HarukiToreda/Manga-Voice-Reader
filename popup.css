@@ -193,14 +193,6 @@ select {
   margin-bottom: 0;
 }
 
-footer {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid #f0f0f0;
-  color: #9ca3af;
-  font-size: 10.5px;
-}
-
 /* toggle switch */
 .switch {
   position: relative;

@@ -38,6 +38,10 @@ const DEFAULT_SETTINGS = {
   kokoroVoiceId: KOKORO_VOICES[0].id,
   direction: 'rtl',
   autoScrollSpeed: 140,
+  // 100 = unchanged from the loudness-normalized level offscreen.js already
+  // synthesizes every line at (see normalizeWavLoudness) — this just scales
+  // that at playback time via the <audio> element's native .volume.
+  volume: 100,
 };
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -103,6 +107,8 @@ function applySettingsToUI() {
   el('kokoroVoiceSelect').value = settings.kokoroVoiceId;
   el('autoScrollSpeedRange').value = settings.autoScrollSpeed;
   el('autoScrollSpeedValue').textContent = settings.autoScrollSpeed;
+  el('volumeRange').value = settings.volume;
+  el('volumeValue').textContent = settings.volume;
   applyEngineVisibility();
 }
 
@@ -125,7 +131,12 @@ async function previewVoice(btn, engine, voiceId) {
   btn.disabled = true;
   btn.textContent = '…';
   try {
-    const resp = await sendToBackground('MVR_TTS_SPEAK', { text: VOICE_PREVIEW_TEXT, voiceId, engine });
+    const resp = await sendToBackground('MVR_TTS_SPEAK', {
+      text: VOICE_PREVIEW_TEXT,
+      voiceId,
+      engine,
+      volume: Number(el('volumeRange').value),
+    });
     if (!resp || resp.ok === false) throw new Error((resp && resp.error) || 'preview failed');
   } catch (e) {
     btn.textContent = '!';
@@ -160,7 +171,6 @@ function setStatusUI(state) {
     error: 'Had trouble reading a panel',
   };
   text.textContent = labels[state.status] || 'Active';
-  el('processedCount').textContent = state.processedCount ?? 0;
   el('enableToggle').checked = !!state.enabled;
 }
 
@@ -278,10 +288,15 @@ async function init() {
     settings.autoScrollSpeed = Number(e.target.value);
     pushSettings();
   });
+  el('volumeRange').addEventListener('input', (e) => {
+    el('volumeValue').textContent = e.target.value;
+  });
+  el('volumeRange').addEventListener('change', (e) => {
+    settings.volume = Number(e.target.value);
+    pushSettings();
+  });
 
-  el('replayLastBtn').addEventListener('click', () => sendToTab('MVR_REPLAY_LAST'));
-  el('replayVisibleBtn').addEventListener('click', () => sendToTab('MVR_REPLAY_VISIBLE'));
-  el('resetBtn').addEventListener('click', () => sendToTab('MVR_RESET_PROGRESS'));
+  el('readBtn').addEventListener('click', () => sendToTab('MVR_READ_NOW'));
   el('stopBtn').addEventListener('click', () => {
     sendToTab('MVR_STOP');
     setSiteEnabled(false);

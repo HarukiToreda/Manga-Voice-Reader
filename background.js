@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
   piperVoiceId: 'en_US-hfc_female-medium',
   kokoroVoiceId: 'af_heart',
   autoScrollSpeed: 140,
+  volume: 100,
 };
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -154,9 +155,9 @@ async function captureAndRecognize(windowId) {
 // one exists yet), so it always goes through here first, same as the OCR
 // capture flow above — ensureOffscreenDocument() is a no-op once one's
 // already running.
-function speakInOffscreen(text, voiceId, engine) {
+function speakInOffscreen(text, voiceId, engine, volume) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type: 'MVR_TTS_RUN', text, voiceId, engine }, (resp) => {
+    chrome.runtime.sendMessage({ type: 'MVR_TTS_RUN', text, voiceId, engine, volume }, (resp) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
@@ -170,9 +171,9 @@ function speakInOffscreen(text, voiceId, engine) {
   });
 }
 
-async function speakWithTts(text, voiceId, engine) {
+async function speakWithTts(text, voiceId, engine, volume) {
   await ensureOffscreenDocument();
-  return speakInOffscreen(text, voiceId, engine);
+  return speakInOffscreen(text, voiceId, engine, volume);
 }
 
 // Best-effort: starts loading the TTS session (wasm init + first-use model
@@ -227,7 +228,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'MVR_TTS_SPEAK') {
-    speakWithTts(msg.text, msg.voiceId, msg.engine)
+    speakWithTts(msg.text, msg.voiceId, msg.engine, msg.volume)
       .then((resp) => sendResponse(resp))
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;

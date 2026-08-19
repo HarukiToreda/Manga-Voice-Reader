@@ -13,6 +13,9 @@ with a realistic local text-to-speech voice.
 - **Local neural TTS** — reads lines aloud entirely on-device, with a choice
   of engine: Piper (fast, lightweight) or Kokoro (more realistic, larger);
   multiple voices for each, selectable in the popup.
+- **Consistent volume** — every line is automatically loudness-normalized
+  before playback, so switching voices (which can otherwise come out at
+  very different volumes) doesn't mean re-adjusting your system volume.
 - **Reads only the manga** — automatically ignores site chrome, ads, and
   synopsis/info-page text; only recognizes text that actually overlaps a
   manga image on the page.
@@ -37,13 +40,13 @@ with a realistic local text-to-speech voice.
 - **Voice** — picks the specific voice used for reading, within whichever
   engine is selected above. The **▶** button next to it plays a short
   sample so you can hear a voice before committing to it.
+- **Volume** — scales playback loudness (0-100%, default 100 — the level
+  everything is already normalized to, see below).
 - **Reading order** — right-to-left for manga, left-to-right for
   comics/webtoons; controls which panel/bubble gets read first.
 - **Autoscroll speed** — how fast the page glides during Autoscroll.
-- **Re-read last panel / Re-read visible panels** — manually re-trigger OCR
-  without waiting for a scroll to retrigger it.
-- **Forget everything read** — clears the "already read" history so panels
-  you've scrolled past will be read again.
+- **Read** — starts (or restarts, if you've hit Stop) reading the currently
+  visible panels.
 - **Stop** — stops reading entirely for this tab.
 - **Debug log / Last screenshot captured** — expandable panels for
   troubleshooting what the OCR pipeline actually saw.
