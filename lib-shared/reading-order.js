@@ -218,6 +218,26 @@ const READER_CHROME_PATTERNS = [
   // per-chapter recurring problem the way the disclaimers above are).
   /\bSHORTCUTS\b/,
   /\bCUSTOMI[SZ]E\.?$/,
+  // Site breadcrumb/nav/disclaimer block, all confirmed live (2026-08-20)
+  // as a real cause of autoscroll getting stuck: none of these matched any
+  // existing pattern above, so isReaderChrome let them through as "kept"
+  // content — and since this block sits at a fixed position near the top
+  // of every manganato.gg chapter page, autoscroll's probe kept treating
+  // it as newly-discovered manga text and re-steering back toward it
+  // every time the glide neared the top, stalling at that exact position
+  // for 7+ seconds in a live reproduction. Same evidence base as the
+  // OCR-fine-tuning dataset's auto_discard_chrome.js filter (built
+  // separately this session from direct review of real captures) — these
+  // patterns were already validated there against real data before being
+  // ported here.
+  /MANGA\s*ONLINE\s*[»>]/,
+  /YOU'?RE\s*READING\s*.+\s*AT\s*MANGANATO/,
+  /BOOK\s*MARK\s*BUTTON/,
+  /FULL-?SCREEN\s*\(?PC-?ONLY\)?/,
+  /^PREV\s*CHAPTER$/,
+  /^NEXT\s*CHAPTER$/,
+  /^G[O0]?\s*H[A-Z0-9]{0,3}MI?E$/,
+  /^CHAPTER\s*\d+$/,
 ];
 function isReaderChrome(rawText) {
   const normalized = rawText.toUpperCase().replace(/\s+/g, ' ').trim();
@@ -840,7 +860,18 @@ function isRecognizedRemainder(remainderCore, commonWords) {
 // starting with "it". Confirmed live: "ITWAS" (from "/TWAS" after
 // fixDigitLetterConfusion's slash-to-i swap above already ran) needed
 // this specifically.
-const FUSED_WORD_EXACT_FIXES = new Map([['itwas', 'it was']]);
+// "i" itself was tested and rejected as a general SHORT_WORD_PREFIXES entry
+// (same collision-testing discipline as the other rejected prefixes above)
+// — too many real words have a dictionary-real remainder after stripping a
+// leading "i" ("icon"->"i"+"con", "irate"->"i"+"rate", both real words on
+// the remainder side, so a general "i" prefix would wrongly split them).
+// "idont" confirmed live (2026-08-20, full-chapter audit) needs the fix
+// anyway, so it's handled as a single exact fused pair instead, carrying
+// none of that collision risk.
+const FUSED_WORD_EXACT_FIXES = new Map([
+  ['itwas', 'it was'],
+  ['idont', 'i dont'],
+]);
 
 // A bubble's text sometimes wraps across multiple drawn lines and breaks
 // mid-word with a trailing hyphen — e.g. a name ending one line as

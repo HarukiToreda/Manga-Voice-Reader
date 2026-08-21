@@ -8,7 +8,7 @@
 // already read plays it again.
 
 (function () {
-  const MVR_VERSION = 114;
+  const MVR_VERSION = 118;
   // A previous injection's `data-mvr-observed` markers live on the actual
   // DOM elements, not in this closure — if the script runs again (repeat
   // "Start reading" click, or an update while the tab was never fully
@@ -825,12 +825,30 @@
       // the settle-triggered capture picks up the real read once the glide
       // lands, when the same (or, if several bubbles were stacked closely
       // enough to all be caught by the margin, several) bubble reads fully.
+      // delta can come out negative — a bubble/caption taller than the
+      // viewport can show even with the margin subtracted (its top edge is
+      // already above marginPx while its bottom is still cut off) has no
+      // scroll position that fits it whole. Applying a negative delta
+      // anyway sends the glide *backward*; on the next capture the same
+      // bubble is often still too tall to fit and gets flagged cut-off
+      // again, repositioning backward again — a genuine forward/backward
+      // oscillation, not just a re-read (confirmed root-caused 2026-08-20
+      // from a live user report of autoscroll "stuck scrolling up and down
+      // forever" with skipped content; this session's own audit work
+      // turned up several real multi-line caption boxes tall enough to
+      // trigger it, e.g. a 3+ line boxed narration block). Matches the
+      // existing top-cutoff philosophy ("no useful reposition to offer —
+      // scrolling backward mid-read isn't wanted") — an unfittable bubble
+      // stays skipped rather than fought over forever.
       if (autoScrolling && cutoffTopY !== null) {
         const delta = Math.round(cutoffTopY - autoScrollRepositionMarginPx());
-        logEvent(`Bubble cut off at the bottom edge (y=${Math.round(cutoffTopY)}px, viewport ${window.innerHeight}px) — repositioning ${delta}px to bring it fully into view`);
-        autoScrollGlideTargetY = window.scrollY + delta;
-        startGliding();
-        return;
+        if (delta > 0) {
+          logEvent(`Bubble cut off at the bottom edge (y=${Math.round(cutoffTopY)}px, viewport ${window.innerHeight}px) — repositioning ${delta}px to bring it fully into view`);
+          autoScrollGlideTargetY = window.scrollY + delta;
+          startGliding();
+          return;
+        }
+        logEvent(`Bubble cut off at the bottom edge (y=${Math.round(cutoffTopY)}px, viewport ${window.innerHeight}px) is too tall to fully fit — skipping it instead of repositioning backward`);
       }
       // Autoscroll-only: the probe already steers the glide toward roughly
       // the right landing spot (see probeForContent), so this is normally a
@@ -1316,16 +1334,29 @@
         // one continuous motion, no jump, no interruption at discovery.
         // If it's already well-positioned, the target is just "here," so
         // the glide stops on the very next frame instead of overshooting.
-        // If the glide has already carried us past where this target would
-        // land (a large OCR delay on a fast glide), autoScrollFrame's own
-        // arrival check handles that too — a small snap back to the exact
-        // target, never a runaway overshoot forward.
+        //
+        // "Here" was originally scrollYAtCapture (this comment used to
+        // claim any overshoot correction would be a "small snap back" —
+        // wrong in practice, confirmed live 2026-08-20: OCR can easily
+        // take 1-5 seconds (retries push it further), during which the
+        // still-moving glide travels 200-1000+ px past scrollYAtCapture.
+        // Targeting that stale, already-passed position sent the glide
+        // gliding *backward* to "catch up" to where it was seconds ago —
+        // a real multi-second reverse glide, not a small correction, and
+        // exactly what a live user report described as autoscroll getting
+        // "stuck scrolling up and down forever." Clamping to the *current*
+        // scrollY (read fresh here, not the stale capture-time value)
+        // means "already well-positioned" only ever means "stop moving
+        // forward," never "reverse to an earlier position" — this was the
+        // one spot in the whole reposition system without runCaptureOCR's
+        // own staleness guard (its capturePosition-mismatch check, which
+        // discards a stale result outright instead of acting on it).
         const probeTopY = deviceYToCssY(Math.min(...result.kept.map((b) => b.bbox.y0)), result.height);
         const target =
           probeTopY > window.innerHeight * AUTOSCROLL_REPOSITION_THRESHOLD_RATIO
             ? scrollYAtCapture + Math.round(probeTopY - autoScrollRepositionMarginPx())
             : scrollYAtCapture;
-        autoScrollGlideTargetY = target;
+        autoScrollGlideTargetY = Math.max(target, window.scrollY);
         logEvent(`Autoscroll: text found at y=${Math.round(probeTopY)}px — gliding to reading position`);
       }
     } catch (e) {
