@@ -8,7 +8,7 @@
 // already read plays it again.
 
 (function () {
-  const MVR_VERSION = 118;
+  const MVR_VERSION = 122;
   // A previous injection's `data-mvr-observed` markers live on the actual
   // DOM elements, not in this closure — if the script runs again (repeat
   // "Start reading" click, or an update while the tab was never fully
@@ -705,7 +705,9 @@
         MVR_LOGIC.respellForPronunciation(
           MVR_LOGIC.joinHyphenatedLineBreak(
             MVR_LOGIC.insertMissingWordSpace(
-              MVR_LOGIC.fixDigitLetterConfusion(b.text.replace(/\s+/g, ' ').trim(), commonWordsSet),
+              MVR_LOGIC.insertSpaceAfterComma(
+                MVR_LOGIC.fixDigitLetterConfusion(b.text.replace(/\s+/g, ' ').trim(), commonWordsSet)
+              ),
               commonWordsSet
             )
           ),

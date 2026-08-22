@@ -46,6 +46,38 @@ ortEnv.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
 // blind; the underlying problem (digit/CJK misreads) is real and worth
 // revisiting, but needs a way to validate the exact browser code path
 // before trying again, not another guess.
+// Fine-tuned recognition model (C:\Reader-ocr-finetune\, trained on real
+// manga dialogue crops instead of generic-document text — see that repo's
+// README.md for the full training/export trail). Small enough (4.46MB) to
+// bundle directly rather than fetch-and-OPFS-cache like comic-text-detector
+// below; loaded as a plain package resource, no external hosting needed.
+// Dictionary is untouched (same file, byte-identical) — confirmed the
+// exported model's class count (6906) matches the default dictionary's
+// raw split length (also 6906, per ppu-paddle-ocr's parseDictionary just
+// doing `content.split(/\r?\n/)` with no trimming) before wiring this in,
+// so no changeTextDictionary() call is needed alongside changeRecognitionModel().
+//
+// Live A/B tested 2026-08-22 against the un-fine-tuned baseline on a real
+// chapter neither model was trained on (escha-logy-no-atelier...), same
+// exact captured panels compared side by side: a genuine MIXED result, not
+// a clean win. Fixed some things baseline got wrong (missing spaces,
+// dropped apostrophes: "ITIS"->"IT'S"), but also introduced new misreads
+// baseline didn't have ("WILL"->"WITLL", "DISAPPEARS"->"DISAP?EARS") on
+// stylized annotation/translator-note text unlike the dialogue-focused
+// training set. Kept live anyway (explicit user decision) despite the
+// mixed result — the held-out eval win (50.6% vs 31.4%, see
+// C:\Reader-ocr-finetune\README.md) was measured on data from the same
+// captured series/fonts as training, so it doesn't by itself prove
+// generalization to arbitrary unseen manga the way this live test does.
+// Root cause is almost certainly dataset size/diversity, not a wiring bug
+// — 3,395 training samples is still under PaddleOCR's own stated 5,000
+// floor. See that README's "Next steps" for how to grow the dataset and
+// retrain; when a new rec_finetuned.onnx is ready, just overwrite
+// lib/models/rec_finetuned.onnx with it — no other code changes needed
+// unless the dictionary itself ever changes too (verify the class-count
+// check above still holds, same as this time).
+const FINETUNED_RECOGNITION_MODEL_PATH = 'lib/models/rec_finetuned.onnx';
+
 let paddleServicePromise = null;
 function getPaddleService() {
   if (!paddleServicePromise) {
@@ -63,7 +95,11 @@ function getPaddleService() {
       // *line-merging* symptom, not text never being detected at all.
       detection: { maxSideLength: 1920 },
     });
-    paddleServicePromise = service.initialize().then(() => service);
+    paddleServicePromise = service.initialize().then(async () => {
+      const buf = await (await fetch(chrome.runtime.getURL(FINETUNED_RECOGNITION_MODEL_PATH))).arrayBuffer();
+      await service.changeRecognitionModel(buf);
+      return service;
+    });
   }
   return paddleServicePromise;
 }

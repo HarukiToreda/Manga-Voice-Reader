@@ -669,6 +669,17 @@ function replaceSlashes(text) {
   return text.replace(/[/\\]/g, 'i');
 }
 
+// A comma is never directly followed by a letter with no space in real
+// English text — OCR just occasionally drops that space when the glyphs
+// are tightly kerned. Unconditional, no dictionary gate needed (unlike
+// the word-fusion fixes below): there's no real word/name this could ever
+// collide with, since a comma-then-letter run isn't a word to begin with.
+// Confirmed live (2026-08-20, full-chapter audit): "DENIL,COME OUT...",
+// "OKAY,I'VE REACHED...", "YEAH,IAM!" all missing this exact space.
+function insertSpaceAfterComma(text) {
+  return text.replace(/,([A-Za-z])/g, ', $1');
+}
+
 // Fixes a digit misread as its letter lookalike inside an otherwise-alpha
 // token (e.g. "S0ON"). A digit embedded in a run of letters is essentially
 // never intentional in comic dialogue, unlike a full-letter substitution
@@ -861,16 +872,70 @@ function isRecognizedRemainder(remainderCore, commonWords) {
 // fixDigitLetterConfusion's slash-to-i swap above already ran) needed
 // this specifically.
 // "i" itself was tested and rejected as a general SHORT_WORD_PREFIXES entry
-// (same collision-testing discipline as the other rejected prefixes above)
-// — too many real words have a dictionary-real remainder after stripping a
-// leading "i" ("icon"->"i"+"con", "irate"->"i"+"rate", both real words on
-// the remainder side, so a general "i" prefix would wrongly split them).
-// "idont" confirmed live (2026-08-20, full-chapter audit) needs the fix
-// anyway, so it's handled as a single exact fused pair instead, carrying
-// none of that collision risk.
+// — re-examined carefully 2026-08-20 after a chapter with 30+ distinct
+// "I"+word fusions made a general rule tempting, but the actual collision
+// check (not just "does the *whole* token happen to already be a
+// recognized word" — most single-word collisions like "icon"/"ice"/
+// "iron"/"ideal" are already protected by the "already a real word, leave
+// it alone" bailout above, running *before* this prefix loop ever sees
+// them) turned up genuine risk from words NOT already in the dictionary:
+// "irate" -> "i"+"rate" and "imp" -> "i"+"mp", both real, both plausible
+// in manga dialogue/fantasy content ("he was irate," "a tiny imp"). Same
+// "a single-letter prefix is too prolific" conclusion as "a" above, just
+// reached by checking the right thing this time. Handled as individual
+// exact fused pairs instead — each one below was confirmed live across
+// two separate full-chapter audits (2026-08-20), carrying none of the
+// single-letter prefix's collision risk since each only ever matches its
+// own exact fused spelling.
+// "just" was tested and rejected as a general prefix for the same reason
+// ("justoutside" confirmed live, but a general "just" prefix risks
+// collisions the same way single-letter prefixes do).
 const FUSED_WORD_EXACT_FIXES = new Map([
   ['itwas', 'it was'],
   ['idont', 'i dont'],
+  ["idon't", 'i dont'],
+  ["ididn't", 'i didnt'],
+  ['iam', 'i am'],
+  ['iarrived', 'i arrived'],
+  ['iwanted', 'i wanted'],
+  ['ifelt', 'i felt'],
+  ['ireally', 'i really'],
+  ['iwas', 'i was'],
+  ['itried', 'i tried'],
+  ['iknew', 'i knew'],
+  ['icouldnt', 'i couldnt'],
+  ["icouldn't", 'i couldnt'],
+  ['ifailed', 'i failed'],
+  ['ihave', 'i have'],
+  ['ino', 'i no'],
+  ['thati', 'that i'],
+  ['theni', 'then i'],
+  ['asineeded', 'as i needed'],
+  ['ifhehas', 'if he has'],
+  ['whyare', 'why are'],
+  ['findout', 'find out'],
+  ['withyou', 'with you'],
+  ['youget', 'you get'],
+  ['youthink', 'you think'],
+  ['lookeddownon', 'looked down on'],
+  ['stopit', 'stop it'],
+  ['afterall', 'after all'],
+  ['myeyes', 'my eyes'],
+  ['hisname', 'his name'],
+  ['hemust', 'he must'],
+  ['hordeof', 'horde of'],
+  ['themon', 'them on'],
+  ['willbe', 'will be'],
+  ['ofit', 'of it'],
+  ['justoutside', 'just outside'],
+  // Confirmed live 2026-08-20 (One Piece ch.1191 audit) — "of"/"such"
+  // weren't added as general SHORT_WORD_PREFIXES entries for the same
+  // reason as "i"/"just": real dictionary-real remainders exist
+  // ("often" -> "of"+"ten", "ten" is real) that a general prefix would
+  // wrongly split.
+  ['ifi', 'if i'],
+  ['ofthe', 'of the'],
+  ['sucha', 'such a'],
 ]);
 
 // A bubble's text sometimes wraps across multiple drawn lines and breaks
@@ -979,6 +1044,7 @@ const MVR_LOGIC = {
   fixDigitLetterConfusion,
   insertMissingWordSpace,
   joinHyphenatedLineBreak,
+  insertSpaceAfterComma,
   respellForPronunciation,
 };
 
